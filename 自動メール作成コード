@@ -1,0 +1,78 @@
+ function createEmailDraft() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  
+  // TOとCCのアドレスを指定のセルから取得
+  const toAddress = sheet.getRange("D5").getDisplayValue();
+  const ccAddress = sheet.getRange("G5").getDisplayValue();
+  
+  // シートの全データを表示されている見た目通りの文字列として取得（日付の形式崩れを防ぐため）
+  const data = sheet.getDataRange().getDisplayValues();
+  
+  let propertyListText = "";
+  let targetCount = 0;
+  
+  // データ行をループ処理（1行目から最後までチェックします）
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i];
+    
+    const status = row[0]; // A列：作成状況
+    
+    // A列が「未送信」と入力されている行のみを対象とする
+    if (status === "未送信") {
+      const saitenDate = row[2]; // C列：再点日
+      const accNum = row[3];     // D列：アカウント番号
+      const propId = row[4];     // E列：物件ID
+      const addressF = row[5];   // F列：物件住所1
+      const addressG = row[6];   // G列：物件住所2
+      
+      // F列とG列の住所を結合（G列が空欄でなければ間に半角スペースを入れる）
+      const fullAddress = addressF + (addressG !== "" ? " " + addressG : "");
+      
+      // ご指定のフォーマットでテキストを組み立て
+      propertyListText += "・" + fullAddress + "　他社再点日　" + saitenDate + "\n";
+      propertyListText += "（" + accNum + "／" + propId + "）\n\n";
+      
+      targetCount++;
+      
+      // 処理が終わった行のA列を「送信済み」に変更して、次回の重複作成を防ぐ
+      // ※ iは0から始まるため、スプレッドシートの実際の行番号は i + 1 になります
+      sheet.getRange(i + 1, 1).setValue("送信済み");
+    }
+  }
+  
+  // 対象の物件が1件もない場合はアラートを出して終了
+  if (targetCount === 0) {
+    Browser.msgBox("A列が「未送信」になっている物件がありませんでした。");
+    return;
+  }
+  
+  // メールの本文を作成
+  const body = `村上様
+  
+いつも大変お世話になっております。
+TGオクトパスエナジーの田中でございます。
+
+下記の${targetCount}物件について現在弊社の空室通電サービスにて通電中ですが、
+${targetCount}物件それぞれに対して他社から通電をしたいという連絡が四電送配電を通じてありました。
+下記いずれの方針で進めるのかを物件毎にご指示ください。
+①他社からの通電依頼を拒絶し、空室通電サービスにて通電を継続する。（清掃業者による通電依頼であればコチラを選択）
+②他社からの通電依頼を受諾し、他社からの通電依頼の再点日に応じて空室通電サービスでの通電を廃止する。（入居者による通電依頼であればコチラを選択）
+
+＜対象物件と他社再点希望日＞
+${propertyListText}
+お手数をおかけしますが、ご指示のほどよろしくお願いいたします。`;
+
+  // メールの件名（ご指定のものに固定）
+  const subject = "【空室通電】通電継続の可否についてご確認のお願い";
+  
+  // CCのオプション設定（CCが空欄の場合のエラーを防ぐための処理）
+  const options = {};
+  if (ccAddress !== "") {
+    options.cc = ccAddress;
+  }
+
+  // Gmailの下書きを作成（To, 件名, 本文, オプション[CC]）
+  GmailApp.createDraft(toAddress, subject, body, options);
+  
+  Browser.msgBox(`Gmailの下書きに ${targetCount}件 の物件を含むメールを作成しました！\\n（宛先: ${toAddress}）`);
+}
