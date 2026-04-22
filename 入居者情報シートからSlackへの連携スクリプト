@@ -1,0 +1,129 @@
+/**
+ * 入力シート -> データ連携シート 転記処理
+ * 条件：チェックボックスがTRUE かつ 連携完了フラグが空白
+ * 転記先：別ブック「データ連携シート」の次の空行
+ * その後：元行の「連携完了フラグ」へ「連携済」をセット
+ */
+function syncToLinkedSheet() {
+  // ===== 設定 =====
+  const SRC_SHEET_NAME = '入力シート';
+  const DEST_SPREADSHEET_ID = '1Ps_QvQhf7F-uuMxQ-tIEy1-SxSs5O35W86Yyaaoykhk';
+  const DEST_SHEET_NAME = 'データ連携シート';
+  const FIXED_REAL_ESTATE_NAME = 'アイユーホーム'; // 不動産会社 列に入れる固定値
+  const COMPLETE_FLAG_VALUE = '連携済';
+
+  // 入力シートの列定義（1始まりの列番号）
+  const SRC_COL = {
+    CHECK: 1,             // チェックボックス
+    TEL: 2,               // 電話番号
+    RELAY_DATE: 3,        // データ連携日
+    NAME: 4,              // 名前
+    KANA: 5,              // フリガナ
+    EMAIL: 6,             // メールアドレス
+    ZIP: 7,               // 郵便番号
+    ADDRESS: 8,           // 住所
+    MOVEIN: 9,            // 入居予定日
+    PREFERRED_DATETIME: 10, // 連絡希望日時
+    ELEC: 11,             // 電気案内
+    GAS: 12,              // ガス案内
+    WATER: 13,            // 水道案内
+    NET: 14,              // ネット案内
+    WS: 15,               // WS案内
+    DOB: 16,              // 生年月日
+    MEMO: 17,             // 備考
+    EXTRA: 18,            // 予備（未使用）
+    AGENT_NAME: 19,       // 不動産担当者名
+    DONE_FLAG: 20         // 連携完了フラグ
+  };
+
+  // 転記先（データ連携シート）の列順：1〜20
+  // 1:登録結果, 2:電話番号, 3:データ連携日, 4:不動産会社, 5:名前, 6:フリガナ,
+  // 7:メール, 8:郵便番号, 9:住所, 10:入居予定日, 11:連絡希望日時,
+  // 12:電気案内, 13:ガス案内, 14:水道案内, 15:ネット案内, 16:WS案内,
+  // 17:生年月日, 18:備考, 19:旧リスト架電状況, 20:不動産担当者名
+
+  const srcSS = SpreadsheetApp.getActiveSpreadsheet();
+  const srcSheet = srcSS.getSheetByName(SRC_SHEET_NAME);
+  if (!srcSheet) throw new Error(`元シートが見つかりません: ${SRC_SHEET_NAME}`);
+
+  const lastRow = srcSheet.getLastRow();
+  const lastCol = srcSheet.getLastColumn();
+  if (lastRow < 2) {
+    // データなし
+    Logger.log('対象データなし（行がありません）');
+    return;
+  }
+
+  // ヘッダーを除いたデータ範囲
+  const srcRange = srcSheet.getRange(2, 1, lastRow - 1, lastCol);
+  const srcValues = srcRange.getValues();
+
+  // 転記対象の行を抽出＆転記用配列作成
+  const rowsToAppend = [];
+  const srcRowIndexesToMark = []; // 元シートの行番号（1始まり）を保持（後で「連携済」を書くため）
+
+  for (let i = 0; i < srcValues.length; i++) {
+    const row = srcValues[i];
+
+    const isChecked = row[SRC_COL.CHECK - 1] === true; // チェックボックスはboolean
+    const doneFlag = String(row[SRC_COL.DONE_FLAG - 1] || '').trim();
+
+    if (!isChecked || doneFlag !== '') continue; // 条件に合わない
+
+    // 値取得（undefinedを空文字に寄せる）
+    const v = (col) => {
+      const val = row[col - 1];
+      return val === undefined ? '' : val;
+    };
+
+    const destRow = [
+      '',                         // 1 登録結果（空）
+      v(SRC_COL.TEL),             // 2 電話番号
+      v(SRC_COL.RELAY_DATE),      // 3 データ連携日
+      FIXED_REAL_ESTATE_NAME,     // 4 不動産会社（固定）
+      v(SRC_COL.NAME),            // 5 名前
+      v(SRC_COL.KANA),            // 6 フリガナ
+      v(SRC_COL.EMAIL),           // 7 メール
+      v(SRC_COL.ZIP),             // 8 郵便番号
+      v(SRC_COL.ADDRESS),         // 9 住所
+      v(SRC_COL.MOVEIN),          // 10 入居予定日
+      v(SRC_COL.PREFERRED_DATETIME), // 11 連絡希望日時
+      v(SRC_COL.ELEC),            // 12 電気案内
+      v(SRC_COL.GAS),             // 13 ガス案内
+      v(SRC_COL.WATER),           // 14 水道案内
+      v(SRC_COL.NET),             // 15 ネット案内
+      v(SRC_COL.WS),              // 16 WS案内
+      v(SRC_COL.DOB),             // 17 生年月日
+      v(SRC_COL.MEMO),            // 18 備考
+      '',                         // 19 旧リスト架電状況（空）
+      v(SRC_COL.AGENT_NAME)       // 20 不動産担当者名
+    ];
+
+    rowsToAppend.push(destRow);
+    // 実際のシート上の行番号（ヘッダー分+2行目=オフセット1）
+    srcRowIndexesToMark.push(i + 2);
+  }
+
+  if (rowsToAppend.length === 0) {
+    Logger.log('対象データなし（条件に合致する行がありません）');
+    return;
+  }
+
+  // 転記先へ一括書き込み
+  const destSS = SpreadsheetApp.openById(DEST_SPREADSHEET_ID);
+  const destSheet = destSS.getSheetByName(DEST_SHEET_NAME);
+  if (!destSheet) throw new Error(`転記先シートが見つかりません: ${DEST_SHEET_NAME}`);
+
+  const destStartRow = destSheet.getLastRow() + 1; // 次の空行
+  const destRange = destSheet.getRange(destStartRow, 1, rowsToAppend.length, 20);
+  destRange.setValues(rowsToAppend);
+
+  // 元シートに「連携済」を書き込み（行が飛び飛びの場合があるので個別 setValue で安全に）
+  const COMPLETE_COL = SRC_COL.DONE_FLAG;
+  srcRowIndexesToMark.forEach(r => {
+    srcSheet.getRange(r, COMPLETE_COL).setValue(COMPLETE_FLAG_VALUE);
+  });
+
+  SpreadsheetApp.flush();
+  Logger.log(`転記件数: ${rowsToAppend.length} 件`);
+}
